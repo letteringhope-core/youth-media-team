@@ -34,7 +34,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDL_1k53TMCgLMVCaBMEIzigr-iVK-t8ZI",
@@ -51,7 +51,7 @@
   const docRef = doc(db, "media-team", "state");
 
   window.__firestore = { docRef, getDoc, setDoc, onSnapshot };
-  window.__auth = { auth, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile };
+  window.__auth = { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile };
   window.dispatchEvent(new Event("firestore-ready"));
 </script>
 
@@ -67,6 +67,7 @@ const FOOTAGE_COLOR = { "Not Shot":"#c15a3e", "Partially Shot":"#c9a227", "Fully
 const ROLES = ["Camera/Shooter", "Editor", "Graphic Designer", "Video Editor"];
 const IDEA_STATUS = ["New", "Considering", "Promoted", "Rejected"];
 const EVENT_TYPES = ["Sermon Series", "Event"];
+const TEAM_CODE = "media2627"; // change this, then tell your team the new code
 const uid = () => Math.random().toString(36).slice(2, 10);
 const emptyState = () => ({ posts: [], ideas: [], footage: [], roster: [], events: [] });
 
@@ -141,6 +142,13 @@ function useAuth() {
     await signInWithEmailAndPassword(auth, email, password);
   }, []);
 
+  const signup = useCallback(async (email, password, name) => {
+    const { auth, createUserWithEmailAndPassword, updateProfile } = window.__auth;
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(cred.user, { displayName: name });
+    setUser({ ...cred.user });
+  }, []);
+
   const logout = useCallback(async () => {
     const { auth, signOut } = window.__auth;
     await signOut(auth);
@@ -152,12 +160,15 @@ function useAuth() {
     setUser({ ...auth.currentUser });
   }, []);
 
-  return { user, login, logout, setName };
+  return { user, login, signup, logout, setName };
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, onSignup }) {
+  const [mode, setMode] = useState("signin"); // signin | signup
+  const [name, setNameField] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -165,9 +176,22 @@ function LoginScreen({ onLogin }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await onLogin(email, password);
+      if (mode === "signin") {
+        await onLogin(email, password);
+      } else {
+        if (code.trim() !== TEAM_CODE) {
+          throw new Error("bad code");
+        }
+        if (password.length < 6) {
+          throw new Error("weak password");
+        }
+        await onSignup(email, password, name);
+      }
     } catch (err) {
-      setError("Couldn't sign in — check your email and password.");
+      if (err.message === "bad code") setError("That team code isn't right — check with whoever shared it.");
+      else if (err.message === "weak password") setError("Password needs to be at least 6 characters.");
+      else if (mode === "signup") setError("Couldn't create account — that email may already be registered.");
+      else setError("Couldn't sign in — check your email and password.");
     } finally {
       setBusy(false);
     }
@@ -177,15 +201,30 @@ function LoginScreen({ onLogin }) {
     <div className="min-h-screen flex items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm bg-[#111318]/60 border border-[#1a1c21] rounded-xl p-8">
         <div className="font-mono text-[10px] tracking-[0.3em] text-[#c9a227]/80 mb-2">MEDIA TEAM</div>
-        <h1 className="font-serif text-2xl text-[#f2efe8] mb-1">Sign in to PSU</h1>
-        <p className="font-serif-italic text-sm text-[#7a7d85] mb-6">Use the email and password given to you</p>
+        <h1 className="font-serif text-2xl text-[#f2efe8] mb-1">{mode === "signin" ? "Sign in to PSU" : "Create your PSU account"}</h1>
+        <p className="font-serif-italic text-sm text-[#7a7d85] mb-6">
+          {mode === "signin" ? "Not on the team yet? Create an account instead." : "You'll need the team code to join — ask your lead if you don't have it."}
+        </p>
         {error && <div className="text-xs text-[#e8a48f] bg-[#c15a3e]/15 border border-[#c15a3e]/30 rounded-lg px-3 py-2 mb-4">{error}</div>}
         <div className="space-y-3">
+          {mode === "signup" && (
+            <Field label="Your Name"><TextInput required value={name} onChange={e => setNameField(e.target.value)} placeholder="Full name" /></Field>
+          )}
           <Field label="Email"><TextInput type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" /></Field>
           <Field label="Password"><TextInput type="password" required value={password} onChange={e => setPassword(e.target.value)} /></Field>
+          {mode === "signup" && (
+            <Field label="Team Code"><TextInput required value={code} onChange={e => setCode(e.target.value)} placeholder="Ask your lead" /></Field>
+          )}
         </div>
         <button type="submit" disabled={busy} className="w-full mt-6 px-4 py-2.5 text-sm font-medium rounded-full bg-[#c9a227] text-[#0f1114] hover:bg-[#dab647] transition-colors disabled:opacity-60">
-          {busy ? "Signing in…" : "Sign In"}
+          {busy ? "Please wait…" : mode === "signin" ? "Sign In" : "Create Account"}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); }}
+          className="w-full mt-3 text-xs text-[#7a7d85] hover:text-[#edeae3] font-mono"
+        >
+          {mode === "signin" ? "New here? Create an account →" : "← Already have an account? Sign in"}
         </button>
       </form>
     </div>
@@ -324,13 +363,13 @@ function Dashboard({ user, logout }) {
 }
 
 function App() {
-  const { user, login, logout, setName } = useAuth();
+  const { user, login, signup, logout, setName } = useAuth();
 
   if (user === undefined) {
     return <div className="min-h-screen flex items-center justify-center text-[#c9a227] font-serif-italic text-lg">Loading…</div>;
   }
   if (user === null) {
-    return <LoginScreen onLogin={login} />;
+    return <LoginScreen onLogin={login} onSignup={signup} />;
   }
   if (!user.displayName) {
     return <NamePrompt onSave={setName} />;
