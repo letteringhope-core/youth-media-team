@@ -46,7 +46,7 @@ const { useState, useEffect, useCallback, useRef } = React;
 // ---- constants -------------------------------------------------------
 const STAGES = ["Idea", "Assigned", "Shooting", "Editing", "Review", "Posted"];
 const STAGE_COLOR = { Idea:"#6b6e76", Assigned:"#c9a227", Shooting:"#c15a3e", Editing:"#4a7fa7", Review:"#8b6ba8", Posted:"#5b8c5a" };
-const CONTENT_TYPES = ["Sunday Recap", "Sermon Clip", "Event Promo", "BTS"];
+const CONTENT_TYPES = ["Sunday Recap", "Sermon Clip", "Event Promo", "BTS", "Poster", "Story"];
 const FOOTAGE_STATUS = ["Not Shot", "Partially Shot", "Fully Shot", "Missing"];
 const FOOTAGE_COLOR = { "Not Shot":"#c15a3e", "Partially Shot":"#c9a227", "Fully Shot":"#5b8c5a", Missing:"#6b6e76" };
 const ROLES = ["Camera/Shooter", "Editor", "Graphic Designer", "Video Editor"];
@@ -168,7 +168,7 @@ function App() {
     <div className="min-h-screen bg-[#0b0c0f] text-[#edeae3] flex flex-col md:flex-row">
       <div className="md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-[#1e2127] bg-[#0e0f12] flex md:flex-col">
         <div className="px-5 py-5 border-b border-[#1e2127] hidden md:block">
-          <div className="font-mono text-[10px] tracking-[0.2em] text-[#c9a227] mb-1">YOUTH CHURCH</div>
+          <div className="font-mono text-[10px] tracking-[0.2em] text-[#c9a227] mb-1">PSU</div>
           <div className="font-serif text-xl leading-tight">Media Team</div>
         </div>
         <nav className="flex md:flex-col overflow-x-auto md:overflow-visible flex-1">
