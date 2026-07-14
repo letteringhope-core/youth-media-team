@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Youth Church Media Team</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  body { background:#0b0c0f; font-family:'Inter',sans-serif; }
+  .font-serif { font-family:'Fraunces',serif; }
+  .font-mono { font-family:'IBM Plex Mono',monospace; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ====== FIREBASE CONFIG — paste your config here, see SETUP_GUIDE.md ====== -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDL_1k53TMCgLMVCaBMEIzigr-iVK-t8ZI",
+    authDomain: "psu-media-team.firebaseapp.com",
+    projectId: "psu-media-team",
+    storageBucket: "psu-media-team.firebasestorage.app",
+    messagingSenderId: "500750340726",
+    appId: "1:500750340726:web:edab8f937c09a048958557"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const docRef = doc(db, "media-team", "state");
+
+  window.__firestore = { docRef, getDoc, setDoc, onSnapshot };
+  window.dispatchEvent(new Event("firestore-ready"));
+</script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ---- constants -------------------------------------------------------
+const STAGES = ["Idea", "Assigned", "Shooting", "Editing", "Review", "Posted"];
+const STAGE_COLOR = { Idea:"#6b6e76", Assigned:"#c9a227", Shooting:"#c15a3e", Editing:"#4a7fa7", Review:"#8b6ba8", Posted:"#5b8c5a" };
+const CONTENT_TYPES = ["Sunday Recap", "Sermon Clip", "Event Promo", "BTS"];
+const FOOTAGE_STATUS = ["Not Shot", "Partially Shot", "Fully Shot", "Missing"];
+const FOOTAGE_COLOR = { "Not Shot":"#c15a3e", "Partially Shot":"#c9a227", "Fully Shot":"#5b8c5a", Missing:"#6b6e76" };
+const ROLES = ["Camera/Shooter", "Editor", "Graphic Designer", "Video Editor"];
+const IDEA_STATUS = ["New", "Considering", "Promoted", "Rejected"];
+const EVENT_TYPES = ["Sermon Series", "Event"];
+const uid = () => Math.random().toString(36).slice(2, 10);
+const emptyState = () => ({ posts: [], ideas: [], footage: [], roster: [], events: [] });
+
+// ---- Firestore persistence layer ----------------------------------------
+function useSharedData() {
+  const [data, setData] = useState(null);
+  const [ready, setReady] = useState(!!window.__firestore);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const skipNext = useRef(false);
+
+  useEffect(() => {
+    if (ready) return;
+    const handler = () => setReady(true);
+    window.addEventListener("firestore-ready", handler);
+    return () => window.removeEventListener("firestore-ready", handler);
+  }, [ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const { docRef, getDoc, onSnapshot } = window.__firestore;
+    getDoc(docRef).then((snap) => {
+      if (!snap.exists()) setData(emptyState());
+    }).catch(() => setError("Couldn't reach Firebase. Check your config in index.html."));
+
+    const unsub = onSnapshot(docRef, (snap) => {
+      if (skipNext.current) { skipNext.current = false; return; }
+      setData(snap.exists() ? snap.data() : emptyState());
+    }, () => setError("Couldn't reach Firebase. Check your config in index.html."));
+    return () => unsub();
+  }, [ready]);
+
+  const persist = useCallback(async (next) => {
+    setData(next);
+    if (!window.__firestore) return;
+    setSaving(true);
+    skipNext.current = true;
+    try {
+      await window.__firestore.setDoc(window.__firestore.docRef, next);
+      setError(null);
+    } catch {
+      setError("Save failed — check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  return { data, persist, saving, error };
+}
+
+// ---- small UI atoms ----------------------------------------------------
+function Pill({ label, color }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] tracking-wide uppercase font-medium rounded-sm border"
+      style={{ color, borderColor: color + "55", background: color + "1a" }}>
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />{label}
+    </span>
+  );
+}
+function Field({ label, children }) {
+  return <label className="block"><span className="block text-[11px] uppercase tracking-wider text-[#8b8d93] mb-1">{label}</span>{children}</label>;
+}
+const inputCls = "w-full bg-[#0f1114] border border-[#2a2d34] rounded-sm px-3 py-2 text-sm text-[#edeae3] placeholder-[#5c5f66] focus:outline-none focus:border-[#c9a227] focus:ring-1 focus:ring-[#c9a227]/40";
+function TextInput(props) { return <input {...props} className={inputCls} />; }
+function Select({ options, ...props }) { return <select {...props} className={inputCls}>{options.map(o => <option key={o} value={o}>{o}</option>)}</select>; }
+function IconBtn({ onClick, children, title }) {
+  return <button onClick={onClick} title={title} className="p-1.5 rounded-sm text-[#8b8d93] hover:text-[#edeae3] hover:bg-[#22252b] transition-colors">{children}</button>;
+}
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg bg-[#16181d] border border-[#2a2d34] rounded-md shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2d34]">
+          <h3 className="font-serif text-lg text-[#edeae3]">{title}</h3>
+          <IconBtn onClick={onClose} title="Close">✕</IconBtn>
+        </div>
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">{children}</div>
+      </div>
+    </div>
+  );
+}
+function PrimaryBtn({ onClick, children }) {
+  return <button onClick={onClick} className="px-4 py-2 text-sm font-medium rounded-sm bg-[#c9a227] text-[#0f1114] hover:bg-[#dab647] transition-colors">{children}</button>;
+}
+function Header({ title, subtitle, action }) {
+  return (
+    <div className="flex items-start justify-between mb-6 gap-4">
+      <div><h1 className="font-serif text-2xl md:text-3xl text-[#edeae3]">{title}</h1><p className="text-sm text-[#6b6e76] mt-1">{subtitle}</p></div>
+      {action}
+    </div>
+  );
+}
+function Empty({ text }) {
+  return <div className="border border-dashed border-[#2a2d34] rounded-sm py-14 text-center text-sm text-[#5c5f66]">{text}</div>;
+}
+
+const NAV = [
+  { key: "calendar", label: "Content Calendar", icon: "🎬", no: "01" },
+  { key: "ideas", label: "Idea Bank", icon: "💡", no: "02" },
+  { key: "footage", label: "Footage Log", icon: "📷", no: "03" },
+  { key: "roster", label: "Team Roster", icon: "👥", no: "04" },
+  { key: "events", label: "Series & Events", icon: "📅", no: "05" },
+];
+
+function App() {
+  const { data, persist, saving, error } = useSharedData();
+  const [tab, setTab] = useState("calendar");
+
+  if (!data) {
+    return <div className="min-h-screen bg-[#0b0c0f] flex items-center justify-center text-[#c9a227]">Loading…</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-[#0b0c0f] text-[#edeae3] flex flex-col md:flex-row">
+      <div className="md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-[#1e2127] bg-[#0e0f12] flex md:flex-col">
+        <div className="px-5 py-5 border-b border-[#1e2127] hidden md:block">
+          <div className="font-mono text-[10px] tracking-[0.2em] text-[#c9a227] mb-1">YOUTH CHURCH</div>
+          <div className="font-serif text-xl leading-tight">Media Team</div>
+        </div>
+        <nav className="flex md:flex-col overflow-x-auto md:overflow-visible flex-1">
+          {NAV.map(n => {
+            const active = tab === n.key;
+            return (
+              <button key={n.key} onClick={() => setTab(n.key)}
+                className={`flex items-center gap-3 px-5 py-3.5 text-sm whitespace-nowrap border-l-2 transition-colors ${active ? "border-[#c9a227] bg-[#16181d] text-[#edeae3]" : "border-transparent text-[#8b8d93] hover:text-[#edeae3] hover:bg-[#13151a]"}`}>
+                <span className="font-mono text-[10px] text-[#5c5f66]">{n.no}</span><span>{n.icon}</span>{n.label}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="px-5 py-3 text-[11px] text-[#5c5f66] hidden md:flex items-center gap-2 border-t border-[#1e2127]">
+          {saving ? "saving…" : "synced to team"}
+        </div>
+      </div>
+      <div className="flex-1 min-w-0">
+        {error && <div className="bg-[#c15a3e]/20 border-b border-[#c15a3e]/40 text-[#e8a48f] text-sm px-6 py-2">{error}</div>}
+        {tab === "calendar" && <CalendarView data={data} persist={persist} />}
+        {tab === "ideas" && <IdeaBank data={data} persist={persist} />}
+        {tab === "footage" && <FootageLog data={data} persist={persist} />}
+        {tab === "roster" && <Roster data={data} persist={persist} />}
+        {tab === "events" && <Events data={data} persist={persist} />}
+      </div>
+    </div>
+  );
+}
+
+// ---- Content Calendar ---------------------------------------------------
+function CalendarView({ data, persist }) {
+  const [modal, setModal] = useState(null);
+  const [filter, setFilter] = useState("all");
+  const posts = data.posts || [];
+  const isThisWeek = (dateStr) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr), now = new Date();
+    const start = new Date(now); start.setDate(now.getDate() - now.getDay()); start.setHours(0,0,0,0);
+    const end = new Date(start); end.setDate(start.getDate() + 7);
+    return d >= start && d < end;
+  };
+  const visible = posts.filter(p => filter === "unassigned" ? (p.status === "Idea" && !p.assignedTo) : filter === "week" ? isThisWeek(p.date) : true);
+  const eventTitle = (id) => (data.events || []).find(e => e.id === id)?.title || "";
+  function save(post) {
+    const exists = posts.some(p => p.id === post.id);
+    persist({ ...data, posts: exists ? posts.map(p => p.id === post.id ? post : p) : [...posts, post] });
+    setModal(null);
+  }
+  function remove(id) { persist({ ...data, posts: posts.filter(p => p.id !== id) }); }
+
+  return (
+    <div className="p-6 md:p-8">
+      <Header title="Content Calendar" subtitle={`${posts.length} posts · the hub everything else links back to`}
+        action={<PrimaryBtn onClick={() => setModal("new")}>+ New Post</PrimaryBtn>} />
+      <div className="flex gap-2 mb-5 font-mono text-xs">
+        {[["all","All"],["unassigned","Unassigned Queue"],["week","This Week"]].map(([k,label]) => (
+          <button key={k} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-sm border transition-colors ${filter===k ? "border-[#c9a227] text-[#c9a227] bg-[#c9a227]/10" : "border-[#2a2d34] text-[#8b8d93] hover:text-[#edeae3]"}`}>{label}</button>
+        ))}
+      </div>
+      {visible.length === 0 ? <Empty text="Nothing here yet. Add a post, or promote an idea from the Idea Bank." /> : (
+        <div className="space-y-2">
+          {visible.map(p => (
+            <div key={p.id} className="group flex items-center gap-4 px-4 py-3 bg-[#13151a] border border-[#1e2127] rounded-sm hover:border-[#2a2d34]">
+              <div className="w-36 shrink-0"><Pill label={p.status} color={STAGE_COLOR[p.status]} /></div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-[#edeae3] truncate">{p.title || "Untitled post"}</div>
+                <div className="text-xs text-[#6b6e76] mt-0.5 font-mono">{p.contentType} {p.date ? `· ${p.date}` : ""} {p.deadline ? `· due ${p.deadline}` : ""} {p.eventId ? `· ${eventTitle(p.eventId)}` : ""}</div>
+              </div>
+              <div className="text-xs text-[#8b8d93] w-32 shrink-0 truncate">{p.assignedTo || "—"}</div>
+              {p.postLink && <a href={p.postLink} target="_blank" rel="noreferrer" className="text-[#8b8d93] hover:text-[#c9a227]">🔗</a>}
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                <IconBtn onClick={() => setModal(p)} title="Edit">✎</IconBtn>
+                <IconBtn onClick={() => remove(p.id)} title="Delete">✕</IconBtn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modal && <PostModal post={modal === "new" ? null : modal} events={data.events || []} onClose={() => setModal(null)} onSave={save} />}
+    </div>
+  );
+}
+function PostModal({ post, events, onClose, onSave }) {
+  const [f, setF] = useState(post || { id: uid(), title: "", contentType: CONTENT_TYPES[0], status: "Idea", date: "", deadline: "", assignedTo: "", eventId: "", caption: "", postLink: "" });
+  return (
+    <Modal title={post ? "Edit Post" : "New Post"} onClose={onClose}>
+      <Field label="Title"><TextInput value={f.title} onChange={e => setF({...f, title: e.target.value})} placeholder="Sunday Recap - Week 1" /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Content Type"><Select options={CONTENT_TYPES} value={f.contentType} onChange={e => setF({...f, contentType: e.target.value})} /></Field>
+        <Field label="Status"><Select options={STAGES} value={f.status} onChange={e => setF({...f, status: e.target.value})} /></Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Date"><TextInput type="date" value={f.date} onChange={e => setF({...f, date: e.target.value})} /></Field>
+        <Field label="Deadline"><TextInput type="date" value={f.deadline} onChange={e => setF({...f, deadline: e.target.value})} /></Field>
+      </div>
+      <Field label="Assigned To"><TextInput value={f.assignedTo} onChange={e => setF({...f, assignedTo: e.target.value})} placeholder="Name" /></Field>
+      <Field label="Linked Series / Event"><Select options={["", ...events.map(e => e.id)]} value={f.eventId} onChange={e => setF({...f, eventId: e.target.value})} /></Field>
+      <Field label="Caption"><textarea value={f.caption} onChange={e => setF({...f, caption: e.target.value})} rows={3} className={inputCls} /></Field>
+      <Field label="Post Link"><TextInput value={f.postLink} onChange={e => setF({...f, postLink: e.target.value})} placeholder="https://instagram.com/..." /></Field>
+      <div className="pt-2 flex justify-end"><PrimaryBtn onClick={() => onSave(f)}>Save Post</PrimaryBtn></div>
+    </Modal>
+  );
+}
+
+// ---- Idea Bank -----------------------------------------------------------
+function IdeaBank({ data, persist }) {
+  const [modal, setModal] = useState(null);
+  const ideas = data.ideas || [];
+  function save(idea) {
+    const exists = ideas.some(i => i.id === idea.id);
+    persist({ ...data, ideas: exists ? ideas.map(i => i.id === idea.id ? idea : i) : [...ideas, idea] });
+    setModal(null);
+  }
+  function remove(id) { persist({ ...data, ideas: ideas.filter(i => i.id !== id) }); }
+  function promote(idea) {
+    const post = { id: uid(), title: idea.title, contentType: idea.contentType, status: "Assigned", date: "", deadline: "", assignedTo: "", eventId: "", caption: idea.description, postLink: "" };
+    persist({ ...data, posts: [...(data.posts || []), post], ideas: ideas.map(i => i.id === idea.id ? {...i, status: "Promoted"} : i) });
+  }
+  return (
+    <div className="p-6 md:p-8">
+      <Header title="Idea Bank" subtitle="Anyone drops ideas here — nothing gets lost before it's greenlit" action={<PrimaryBtn onClick={() => setModal("new")}>+ New Idea</PrimaryBtn>} />
+      {ideas.length === 0 ? <Empty text="No ideas yet. Drop the first one." /> : (
+        <div className="space-y-2">
+          {ideas.map(i => (
+            <div key={i.id} className="group flex items-center gap-4 px-4 py-3 bg-[#13151a] border border-[#1e2127] rounded-sm">
+              <div className="w-28 shrink-0"><Pill label={i.status} color={i.status === "Promoted" ? "#5b8c5a" : i.status === "Rejected" ? "#c15a3e" : "#c9a227"} /></div>
+              <div className="flex-1 min-w-0"><div className="text-sm text-[#edeae3]">{i.title}</div><div className="text-xs text-[#6b6e76] mt-0.5 font-mono">{i.contentType} · {i.submittedBy || "unknown"}</div></div>
+              {i.status !== "Promoted" && <button onClick={() => promote(i)} className="text-xs font-mono text-[#c9a227] hover:underline">promote →</button>}
+              <div className="opacity-0 group-hover:opacity-100 flex gap-1"><IconBtn onClick={() => setModal(i)}>✎</IconBtn><IconBtn onClick={() => remove(i.id)}>✕</IconBtn></div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modal && <IdeaModal idea={modal === "new" ? null : modal} onClose={() => setModal(null)} onSave={save} />}
+    </div>
+  );
+}
+function IdeaModal({ idea, onClose, onSave }) {
+  const [f, setF] = useState(idea || { id: uid(), title: "", submittedBy: "", contentType: CONTENT_TYPES[0], description: "", status: "New" });
+  return (
+    <Modal title={idea ? "Edit Idea" : "New Idea"} onClose={onClose}>
+      <Field label="Idea Title"><TextInput value={f.title} onChange={e => setF({...f, title: e.target.value})} /></Field>
+      <Field label="Submitted By"><TextInput value={f.submittedBy} onChange={e => setF({...f, submittedBy: e.target.value})} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Content Type"><Select options={CONTENT_TYPES} value={f.contentType} onChange={e => setF({...f, contentType: e.target.value})} /></Field>
+        <Field label="Status"><Select options={IDEA_STATUS} value={f.status} onChange={e => setF({...f, status: e.target.value})} /></Field>
+      </div>
+      <Field label="Description"><textarea value={f.description} onChange={e => setF({...f, description: e.target.value})} rows={3} className={inputCls} /></Field>
+      <div className="pt-2 flex justify-end"><PrimaryBtn onClick={() => onSave(f)}>Save Idea</PrimaryBtn></div>
+    </Modal>
+  );
+}
+
+// ---- Footage Log -----------------------------------------------------------
+function FootageLog({ data, persist }) {
+  const [modal, setModal] = useState(null);
+  const footage = data.footage || [];
+  const postTitle = (id) => (data.posts || []).find(p => p.id === id)?.title || "unlinked";
+  function save(entry) {
+    const exists = footage.some(f => f.id === entry.id);
+    persist({ ...data, footage: exists ? footage.map(f => f.id === entry.id ? entry : f) : [...footage, entry] });
+    setModal(null);
+  }
+  function remove(id) { persist({ ...data, footage: footage.filter(f => f.id !== id) }); }
+  return (
+    <div className="p-6 md:p-8">
+      <Header title="Footage Log" subtitle="What's shot, what's missing, and where it lives" action={<PrimaryBtn onClick={() => setModal("new")}>+ New Entry</PrimaryBtn>} />
+      {footage.length === 0 ? <Empty text="No footage logged yet." /> : (
+        <div className="space-y-2">
+          {footage.map(f => (
+            <div key={f.id} className="group flex items-center gap-4 px-4 py-3 bg-[#13151a] border border-[#1e2127] rounded-sm">
+              <div className="w-32 shrink-0"><Pill label={f.status} color={FOOTAGE_COLOR[f.status]} /></div>
+              <div className="flex-1 min-w-0"><div className="text-sm text-[#edeae3]">{f.title}</div><div className="text-xs text-[#6b6e76] mt-0.5 font-mono">linked: {postTitle(f.postId)} {f.deadline ? `· due ${f.deadline}` : ""}</div></div>
+              <div className="text-xs text-[#8b8d93] w-40 truncate">{f.location}</div>
+              <div className="opacity-0 group-hover:opacity-100 flex gap-1"><IconBtn onClick={() => setModal(f)}>✎</IconBtn><IconBtn onClick={() => remove(f.id)}>✕</IconBtn></div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modal && <FootageModal entry={modal === "new" ? null : modal} posts={data.posts || []} onClose={() => setModal(null)} onSave={save} />}
+    </div>
+  );
+}
+function FootageModal({ entry, posts, onClose, onSave }) {
+  const [f, setF] = useState(entry || { id: uid(), title: "", postId: "", location: "", status: "Not Shot", deadline: "", notes: "" });
+  return (
+    <Modal title={entry ? "Edit Entry" : "New Footage Entry"} onClose={onClose}>
+      <Field label="Entry Title"><TextInput value={f.title} onChange={e => setF({...f, title: e.target.value})} /></Field>
+      <Field label="Linked Post"><Select options={["", ...posts.map(p => p.id)]} value={f.postId} onChange={e => setF({...f, postId: e.target.value})} /></Field>
+      <Field label="Footage Location"><TextInput value={f.location} onChange={e => setF({...f, location: e.target.value})} placeholder="Drive folder / link" /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Footage Status"><Select options={FOOTAGE_STATUS} value={f.status} onChange={e => setF({...f, status: e.target.value})} /></Field>
+        <Field label="Deadline"><TextInput type="date" value={f.deadline} onChange={e => setF({...f, deadline: e.target.value})} /></Field>
+      </div>
+      <Field label="Notes"><textarea value={f.notes} onChange={e => setF({...f, notes: e.target.value})} rows={2} className={inputCls} /></Field>
+      <div className="pt-2 flex justify-end"><PrimaryBtn onClick={() => onSave(f)}>Save Entry</PrimaryBtn></div>
+    </Modal>
+  );
+}
+
+// ---- Roster -----------------------------------------------------------
+function Roster({ data, persist }) {
+  const [modal, setModal] = useState(null);
+  const roster = data.roster || [];
+  function save(person) {
+    const exists = roster.some(r => r.id === person.id);
+    persist({ ...data, roster: exists ? roster.map(r => r.id === person.id ? person : r) : [...roster, person] });
+    setModal(null);
+  }
+  function remove(id) { persist({ ...data, roster: roster.filter(r => r.id !== id) }); }
+  return (
+    <div className="p-6 md:p-8">
+      <Header title="Team Roster" subtitle="Roles, availability, contact" action={<PrimaryBtn onClick={() => setModal("new")}>+ Add Person</PrimaryBtn>} />
+      {roster.length === 0 ? <Empty text="No team members added yet." /> : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {roster.map(r => (
+            <div key={r.id} className="group p-4 bg-[#13151a] border border-[#1e2127] rounded-sm">
+              <div className="flex items-start justify-between">
+                <div className="text-sm font-medium text-[#edeae3]">{r.name}</div>
+                <div className="opacity-0 group-hover:opacity-100 flex gap-1"><IconBtn onClick={() => setModal(r)}>✎</IconBtn><IconBtn onClick={() => remove(r.id)}>✕</IconBtn></div>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-2">{(r.roles || []).map(role => <span key={role} className="text-[10px] font-mono px-1.5 py-0.5 bg-[#1e2127] text-[#8b8d93] rounded-sm">{role}</span>)}</div>
+              <div className="text-xs text-[#6b6e76] mt-2">{r.availability}</div>
+              {r.contact && <div className="text-xs text-[#6b6e76] mt-0.5 font-mono">{r.contact}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {modal && <RosterModal person={modal === "new" ? null : modal} onClose={() => setModal(null)} onSave={save} />}
+    </div>
+  );
+}
+function RosterModal({ person, onClose, onSave }) {
+  const [f, setF] = useState(person || { id: uid(), name: "", roles: [], availability: "", contact: "", notes: "" });
+  function toggleRole(role) { setF(prev => ({...prev, roles: prev.roles.includes(role) ? prev.roles.filter(r => r !== role) : [...prev.roles, role]})); }
+  return (
+    <Modal title={person ? "Edit Person" : "Add Person"} onClose={onClose}>
+      <Field label="Name"><TextInput value={f.name} onChange={e => setF({...f, name: e.target.value})} /></Field>
+      <Field label="Roles">
+        <div className="flex flex-wrap gap-2">
+          {ROLES.map(role => (
+            <button key={role} type="button" onClick={() => toggleRole(role)} className={`text-xs font-mono px-2 py-1 rounded-sm border ${f.roles.includes(role) ? "border-[#c9a227] text-[#c9a227] bg-[#c9a227]/10" : "border-[#2a2d34] text-[#8b8d93]"}`}>{role}</button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Availability"><TextInput value={f.availability} onChange={e => setF({...f, availability: e.target.value})} placeholder="Sundays only" /></Field>
+      <Field label="Contact"><TextInput value={f.contact} onChange={e => setF({...f, contact: e.target.value})} placeholder="phone / whatsapp" /></Field>
+      <div className="pt-2 flex justify-end"><PrimaryBtn onClick={() => onSave(f)}>Save Person</PrimaryBtn></div>
+    </Modal>
+  );
+}
+
+// ---- Events -----------------------------------------------------------
+function Events({ data, persist }) {
+  const [modal, setModal] = useState(null);
+  const events = data.events || [];
+  function save(ev) {
+    const exists = events.some(e => e.id === ev.id);
+    persist({ ...data, events: exists ? events.map(e => e.id === ev.id ? ev : e) : [...events, ev] });
+    setModal(null);
+  }
+  function remove(id) { persist({ ...data, events: events.filter(e => e.id !== id) }); }
+  return (
+    <div className="p-6 md:p-8">
+      <Header title="Series & Events" subtitle="Sermon series and events that content gets tied to" action={<PrimaryBtn onClick={() => setModal("new")}>+ New</PrimaryBtn>} />
+      {events.length === 0 ? <Empty text="No series or events yet." /> : (
+        <div className="space-y-2">
+          {events.map(e => (
+            <div key={e.id} className="group flex items-center gap-4 px-4 py-3 bg-[#13151a] border border-[#1e2127] rounded-sm">
+              <div className="w-28 shrink-0"><Pill label={e.type} color={e.type === "Sermon Series" ? "#4a7fa7" : "#c15a3e"} /></div>
+              <div className="flex-1 min-w-0"><div className="text-sm text-[#edeae3]">{e.title}</div><div className="text-xs text-[#6b6e76] mt-0.5 font-mono">{e.startDate} {e.endDate ? `→ ${e.endDate}` : ""} {e.speaker ? `· ${e.speaker}` : ""}</div></div>
+              <div className="opacity-0 group-hover:opacity-100 flex gap-1"><IconBtn onClick={() => setModal(e)}>✎</IconBtn><IconBtn onClick={() => remove(e.id)}>✕</IconBtn></div>
+            </div>
+          ))}
+        </div>
+      )}
+      {modal && <EventModal event={modal === "new" ? null : modal} onClose={() => setModal(null)} onSave={save} />}
+    </div>
+  );
+}
+function EventModal({ event, onClose, onSave }) {
+  const [f, setF] = useState(event || { id: uid(), title: "", type: EVENT_TYPES[0], startDate: "", endDate: "", theme: "", speaker: "", notes: "" });
+  return (
+    <Modal title={event ? "Edit" : "New Series / Event"} onClose={onClose}>
+      <Field label="Title"><TextInput value={f.title} onChange={e => setF({...f, title: e.target.value})} /></Field>
+      <Field label="Type"><Select options={EVENT_TYPES} value={f.type} onChange={e => setF({...f, type: e.target.value})} /></Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Start Date"><TextInput type="date" value={f.startDate} onChange={e => setF({...f, startDate: e.target.value})} /></Field>
+        <Field label="End Date"><TextInput type="date" value={f.endDate} onChange={e => setF({...f, endDate: e.target.value})} /></Field>
+      </div>
+      <Field label="Theme / Key Verse"><TextInput value={f.theme} onChange={e => setF({...f, theme: e.target.value})} /></Field>
+      <Field label="Speaker"><TextInput value={f.speaker} onChange={e => setF({...f, speaker: e.target.value})} /></Field>
+      <div className="pt-2 flex justify-end"><PrimaryBtn onClick={() => onSave(f)}>Save</PrimaryBtn></div>
+    </Modal>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
